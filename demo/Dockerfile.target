@@ -1,0 +1,30 @@
+# A container that behaves like a small server: systemd as PID 1, sshd, sudo.
+# This is what lets the playbook use the systemd module unchanged.
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus openssh-server sudo python3 \
+      ca-certificates curl gnupg iproute2 procps \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Units that make no sense inside a container and only produce noise.
+RUN find /etc/systemd/system /lib/systemd/system \
+      -path '*.wants/*' \
+      \( -name '*udev*' -o -name '*getty*' -o -name '*systemd-timesyncd*' \) \
+      -exec rm -f {} + || true
+
+RUN systemctl enable ssh.service \
+ && useradd --create-home --shell /bin/bash ansible \
+ && printf 'ansible ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/ansible \
+ && chmod 0440 /etc/sudoers.d/ansible
+
+COPY entrypoint.sh /usr/local/sbin/entrypoint.sh
+RUN chmod +x /usr/local/sbin/entrypoint.sh
+
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/usr/local/sbin/entrypoint.sh"]

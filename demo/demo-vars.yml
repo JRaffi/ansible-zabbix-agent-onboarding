@@ -1,0 +1,22 @@
+---
+# Overrides for the lab. Passed with -e so they beat group_vars/all.yml
+# without touching the file a user is meant to edit for their own setup.
+
+zabbix_api_url: "http://zabbix-web:8080"
+zabbix_api_validate_certs: false
+
+# Inside the compose network the server is reachable under its service name.
+zabbix_servers:
+  - zabbix-server
+
+# Shipped with every Zabbix installation, so the lookups always succeed.
+zabbix_host_groups:
+  - "Linux servers"
+zabbix_templates:
+  - "Linux by Zabbix agent active"
+
+# No proxy in the lab - this exercises the "monitored by server" path.
+zabbix_proxy_group: ""
+
+# Fine to print here: the whole environment is thrown away afterwards.
+zabbix_show_psk: true

@@ -1,0 +1,317 @@
+---
+# Install Zabbix Agent 2 on Ubuntu/Debian and register the host in Zabbix.
+#
+# Registration talks to the Zabbix JSON-RPC API directly through uri.
+# Requires nothing but ansible-core - no collections, no jmespath.
+
+- name: Install Zabbix Agent 2 and register the host in Zabbix
+  hosts: all
+  become: true
+
+  # Applied to every uri task below, so each API call stays short.
+  module_defaults:
+    ansible.builtin.uri:
+      method: POST
+      body_format: json
+      headers:
+        Content-Type: application/json
+        Authorization: "Bearer {{ zabbix_api_token }}"
+      validate_certs: "{{ zabbix_api_validate_certs }}"
+      use_proxy: false
+
+  vars:
+    zabbix_config_path: /etc/zabbix/zabbix_agent2.conf
+    zabbix_allow_keys_path: /etc/zabbix/zabbix_agent2.d/AllowKeys.conf
+    _api: "{{ zabbix_api_url | regex_replace('/+$', '') }}/api_jsonrpc.php"
+    # Ubuntu needs 24.04, Debian needs 12 - the package name differs.
+    _distro_version: "{{ ansible_distribution_major_version if ansible_distribution == 'Debian' else ansible_distribution_version }}"
+
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+  pre_tasks:
+    - name: Verify the target runs a supported distribution
+      ansible.builtin.assert:
+        that: ansible_distribution in ['Ubuntu', 'Debian']
+        fail_msg: "Only Ubuntu and Debian are supported, found {{ ansible_distribution }}."
+        quiet: true
+
+    - name: Verify the Zabbix API credentials are set
+      ansible.builtin.assert:
+        that:
+          - zabbix_api_url | length > 0
+          - zabbix_api_token | length > 0
+        fail_msg: >-
+          zabbix_api_url and zabbix_api_token are empty. Export ZABBIX_API_URL and
+          ZABBIX_API_TOKEN, or set both in group_vars/all.yml.
+        quiet: true
+      delegate_to: localhost
+      become: false
+
+  tasks:
+    # -----------------------------------------------------------------------
+    # Package
+    # -----------------------------------------------------------------------
+    - name: Install the Zabbix repository package
+      ansible.builtin.apt:
+        deb: >-
+          https://repo.zabbix.com/zabbix/{{ zabbix_release }}/release/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_release }}+{{ ansible_distribution | lower }}{{ _distro_version }}_all.deb
+      environment:
+        http_proxy: "{{ zabbix_apt_proxy }}"
+        https_proxy: "{{ zabbix_apt_proxy }}"
+
+    - name: Install zabbix-agent2
+      ansible.builtin.apt:
+        name: zabbix-agent2
+        state: present
+        update_cache: true
+
+    # -----------------------------------------------------------------------
+    # TLS PSK - reuse an existing secret, never regenerate it
+    # -----------------------------------------------------------------------
+    - name: Check whether a PSK already exists
+      ansible.builtin.stat:
+        path: "{{ zabbix_psk_file }}"
+      register: _psk_stat
+      when: zabbix_tls_psk
+
+    - name: Read the existing PSK
+      ansible.builtin.slurp:
+        src: "{{ zabbix_psk_file }}"
+      register: _psk_existing
+      no_log: true
+      when: zabbix_tls_psk and _psk_stat.stat.exists
+
+    - name: Generate a new PSK
+      ansible.builtin.command: openssl rand -hex 32
+      register: _psk_new
+      no_log: true
+      changed_when: true
+      when: zabbix_tls_psk and not _psk_stat.stat.exists
+
+    - name: Store the PSK with restrictive permissions
+      ansible.builtin.copy:
+        content: "{{ _psk_new.stdout }}"
+        dest: "{{ zabbix_psk_file }}"
+        owner: zabbix
+        group: zabbix
+        mode: "0400"
+      no_log: true
+      when: zabbix_tls_psk and not _psk_stat.stat.exists
+
+    - name: Remember the PSK for the API call
+      ansible.builtin.set_fact:
+        zabbix_psk: "{{ (_psk_existing.content | b64decode | trim) if _psk_stat.stat.exists else (_psk_new.stdout | trim) }}"
+        zabbix_psk_identity: "{{ ansible_fqdn | lower }}.agent"
+      no_log: true
+      when: zabbix_tls_psk
+
+    - name: Show the PSK
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} | identity: {{ zabbix_psk_identity }} | psk: {{ zabbix_psk }}"
+      when: zabbix_tls_psk and zabbix_show_psk | bool
+
+    # -----------------------------------------------------------------------
+    # Agent configuration
+    # -----------------------------------------------------------------------
+    - name: Deploy the agent configuration
+      ansible.builtin.template:
+        src: zabbix_agent2.conf.j2
+        dest: "{{ zabbix_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: zabbix_agent2 -c %s -T
+      notify: Restart Zabbix Agent
+
+    - name: Deploy the AllowKeys whitelist
+      ansible.builtin.template:
+        src: allow_keys.conf.j2
+        dest: "{{ zabbix_allow_keys_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Zabbix Agent
+      when: zabbix_allow_keys | length > 0
+
+    - name: Enable and start zabbix-agent2
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: started
+        enabled: true
+
+    # -----------------------------------------------------------------------
+    # Register the host in Zabbix (idempotent: create or update)
+    # -----------------------------------------------------------------------
+    - name: Register the host in Zabbix
+      delegate_to: localhost
+      become: false
+      block:
+        - name: Look up the host group IDs
+          ansible.builtin.uri:
+            url: "{{ _api }}"
+            body:
+              jsonrpc: "2.0"
+              id: 1
+              method: hostgroup.get
+              params:
+                output: ["groupid", "name"]
+                filter: {name: "{{ zabbix_host_groups }}"}
+          register: _groups
+          changed_when: false
+          no_log: "{{ not zabbix_api_debug }}"   # hides the token; -e zabbix_api_debug=true to see API errors
+
+        - name: Fail when a host group is missing in Zabbix
+          ansible.builtin.fail:
+            msg: >-
+              Host group(s) not found in Zabbix:
+              {{ zabbix_host_groups | difference(_groups.json.result | map(attribute='name') | list) | join(', ') }}
+          when: _groups.json.result | length != zabbix_host_groups | length
+
+        - name: Look up the template IDs
+          ansible.builtin.uri:
+            url: "{{ _api }}"
+            body:
+              jsonrpc: "2.0"
+              id: 2
+              method: template.get
+              params:
+                output: ["templateid", "host"]
+                filter: {host: "{{ zabbix_templates }}"}
+          register: _templates
+          changed_when: false
+          no_log: "{{ not zabbix_api_debug }}"
+
+        - name: Fail when a template is missing in Zabbix
+          ansible.builtin.fail:
+            msg: >-
+              Template(s) not found in Zabbix:
+              {{ zabbix_templates | difference(_templates.json.result | map(attribute='host') | list) | join(', ') }}
+          when: _templates.json.result | length != zabbix_templates | length
+
+        - name: Look up the proxy group ID
+          ansible.builtin.uri:
+            url: "{{ _api }}"
+            body:
+              jsonrpc: "2.0"
+              id: 3
+              method: proxygroup.get
+              params:
+                output: ["proxy_groupid", "name"]
+                filter: {name: ["{{ zabbix_proxy_group }}"]}
+          register: _proxygroup
+          changed_when: false
+          no_log: "{{ not zabbix_api_debug }}"
+          when: zabbix_proxy_group | length > 0
+
+        - name: Fail when the proxy group is missing in Zabbix
+          ansible.builtin.fail:
+            msg: "Proxy group '{{ zabbix_proxy_group }}' not found in Zabbix."
+          when:
+            - zabbix_proxy_group | length > 0
+            - _proxygroup.json.result | length == 0
+
+        - name: Check whether the host already exists
+          ansible.builtin.uri:
+            url: "{{ _api }}"
+            body:
+              jsonrpc: "2.0"
+              id: 4
+              method: host.get
+              params:
+                output: ["hostid"]
+                filter: {host: ["{{ ansible_fqdn | lower }}"]}
+          register: _host
+          changed_when: false
+          no_log: "{{ not zabbix_api_debug }}"
+
+        # host.create expects [{"groupid": "2"}], the lookup returns the name
+        # as well. Building the references in a loop keeps this readable and
+        # avoids pulling in community.general just for a json_query.
+        - name: Start with empty id references
+          ansible.builtin.set_fact:
+            _group_refs: []
+            _template_refs: []
+
+        - name: Collect the host group references
+          ansible.builtin.set_fact:
+            _group_refs: "{{ _group_refs + [{'groupid': item}] }}"
+          loop: "{{ _groups.json.result | map(attribute='groupid') | list }}"
+
+        - name: Collect the template references
+          ansible.builtin.set_fact:
+            _template_refs: "{{ _template_refs + [{'templateid': item}] }}"
+          loop: "{{ _templates.json.result | map(attribute='templateid') | list }}"
+
+        - name: Assemble the host parameters
+          ansible.builtin.set_fact:
+            _host_params: >-
+              {{ _base
+                 | combine(_with_proxy_group if zabbix_proxy_group | length > 0 else {})
+                 | combine(_with_psk if zabbix_tls_psk else {})
+                 | combine({'hostid': _host.json.result[0].hostid} if _host.json.result | length > 0 else {}) }}
+          no_log: "{{ not zabbix_api_debug }}"
+          vars:
+            _base:
+              host: "{{ ansible_fqdn | lower }}"
+              name: "{{ ansible_hostname | lower }}"
+              groups: "{{ _group_refs }}"
+              templates: "{{ _template_refs }}"
+              monitored_by: 0          # 0 = server, 2 = proxy group
+              interfaces:
+                - type: 1              # 1 = agent
+                  main: 1
+                  useip: "{{ 1 if zabbix_use_ip else 0 }}"
+                  ip: "{{ ansible_default_ipv4.address if zabbix_use_ip else '' }}"
+                  dns: "{{ '' if zabbix_use_ip else ansible_fqdn | lower }}"
+                  port: "{{ zabbix_agent_port }}"
+            _with_proxy_group:
+              monitored_by: 2
+              proxy_groupid: "{{ _proxygroup.json.result[0].proxy_groupid | default('') }}"
+            _with_psk:
+              tls_connect: 2           # 2 = PSK
+              tls_accept: 2
+              tls_psk_identity: "{{ zabbix_psk_identity }}"
+              tls_psk: "{{ zabbix_psk }}"
+
+        - name: Create or update the host
+          ansible.builtin.uri:
+            url: "{{ _api }}"
+            body:
+              jsonrpc: "2.0"
+              id: 5
+              method: "{{ 'host.update' if _host.json.result | length > 0 else 'host.create' }}"
+              params: "{{ _host_params }}"
+          register: _register
+          # Zabbix takes database locks while it writes a host, and parallel
+          # writes can collide. This is the only serialised task in the play -
+          # everything before it still runs on all hosts at once.
+          throttle: 1
+          until: _register.json.error is not defined
+          retries: 3
+          delay: 2
+          changed_when: _host.json.result | length == 0
+          # Not failed_when: the next task reports the error in readable form.
+          failed_when: false
+          no_log: "{{ not zabbix_api_debug }}"
+
+        - name: Fail with what Zabbix answered
+          ansible.builtin.fail:
+            msg: >-
+              Zabbix rejected {{ ansible_fqdn | lower }}:
+              {{ _register.json.error.message | default('') }}
+              {{ _register.json.error.data | default('') }}
+          when: _register.json.error is defined
+
+        - name: Report what happened
+          ansible.builtin.debug:
+            msg: >-
+              {{ ansible_fqdn | lower }} was
+              {{ 'updated in' if _host.json.result | length > 0 else 'created in' }} Zabbix
+              {%- if _register.json.error is defined %} - ERROR: {{ _register.json.error }}{% endif %}
+
+  handlers:
+    - name: Restart Zabbix Agent
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted

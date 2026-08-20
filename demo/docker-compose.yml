@@ -1,0 +1,124 @@
+# A complete Zabbix 7.4 lab: server, database, frontend and two target hosts
+# running real systemd, so the playbook does exactly what it does in production.
+#
+# Start it with:  make demo      (from the repository root)
+
+name: zabbix-agent-onboarding-demo
+
+services:
+  # ---------------------------------------------------------------------------
+  # Zabbix stack
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:ubuntu-7.4-latest
+    environment:
+      DB_SERVER_HOST: db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "10051:10051"
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+      PHP_TZ: Europe/Berlin
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"     # http://localhost:8080  -  Admin / zabbix
+
+  # ---------------------------------------------------------------------------
+  # One throwaway SSH key, shared by the controller and the targets
+  # ---------------------------------------------------------------------------
+  keygen:
+    image: alpine:3.20
+    volumes:
+      - keys:/keys
+    command: >-
+      sh -c 'test -f /keys/id_ed25519 ||
+             (apk add --no-cache openssh-keygen >/dev/null &&
+              ssh-keygen -t ed25519 -N "" -C demo -f /keys/id_ed25519);
+             chmod 600 /keys/id_ed25519;
+             chmod 644 /keys/id_ed25519.pub'
+
+  # ---------------------------------------------------------------------------
+  # Target hosts - real systemd, real apt, real sshd
+  # ---------------------------------------------------------------------------
+  ubuntu-target:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+      args:
+        BASE_IMAGE: ubuntu:24.04
+    hostname: ubuntu-target
+    privileged: true          # systemd needs to manage cgroups
+    cgroup: host
+    tmpfs: ["/run", "/run/lock", "/tmp"]
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - keys:/keys:ro
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+
+  debian-target:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+      args:
+        BASE_IMAGE: debian:12
+    hostname: debian-target
+    privileged: true
+    cgroup: host
+    tmpfs: ["/run", "/run/lock", "/tmp"]
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - keys:/keys:ro
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # Ansible controller - so the host only needs Docker, not Ansible
+  # ---------------------------------------------------------------------------
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    volumes:
+      - ..:/repo
+      - keys:/keys:ro
+    working_dir: /repo
+    environment:
+      ANSIBLE_CONFIG: /repo/demo/ansible.cfg
+      ZABBIX_API_URL: "http://zabbix-web:8080"
+      ZABBIX_API_TOKEN: "${ZABBIX_API_TOKEN:-}"
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+    command: ["sleep", "infinity"]
+
+volumes:
+  keys:

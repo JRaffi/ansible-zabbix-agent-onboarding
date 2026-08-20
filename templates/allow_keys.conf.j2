@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# Agent 2 refuses system.run[] unless the exact key string is whitelisted here.
+# The key must match character for character what the template item sends.
+{% for key in zabbix_allow_keys %}
+AllowKey={{ key }}
+{% endfor %}

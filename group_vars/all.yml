@@ -1,0 +1,87 @@
+---
+# ---------------------------------------------------------------------------
+# Zabbix API access
+# ---------------------------------------------------------------------------
+# Read from the environment by default so no secret ends up in git.
+#   export ZABBIX_API_URL=https://zabbix.example.com
+#   export ZABBIX_API_TOKEN=xxxxxxxx
+# Alternatively put the values here and protect the file with ansible-vault.
+zabbix_api_url: "{{ lookup('ansible.builtin.env', 'ZABBIX_API_URL') }}"
+zabbix_api_token: "{{ lookup('ansible.builtin.env', 'ZABBIX_API_TOKEN') }}"
+
+# Set to false only for lab setups with self-signed certificates.
+zabbix_api_validate_certs: true
+
+# ---------------------------------------------------------------------------
+# Agent package
+# ---------------------------------------------------------------------------
+zabbix_release: "7.4"
+
+# Optional HTTP proxy used ONLY for downloading the Zabbix repository package.
+# Leave empty when the targets reach the internet directly.
+zabbix_apt_proxy: ""
+
+# ---------------------------------------------------------------------------
+# Which server or proxy the agent talks to
+# ---------------------------------------------------------------------------
+# One or more Zabbix servers / proxies. Used for both passive and active checks.
+zabbix_servers:
+  - zabbix.example.com
+
+# Passive checks: who may connect TO the agent (comma separated).
+# Override per host group, e.g. "127.0.0.1" on the Zabbix server itself.
+zabbix_server_passive: "{{ zabbix_servers | join(',') }}"
+
+# Active checks: where the agent connects TO (semicolon separated).
+zabbix_server_active: "{{ zabbix_servers | join(';') }}"
+
+# ---------------------------------------------------------------------------
+# How the host is created in Zabbix
+# ---------------------------------------------------------------------------
+# Host groups and templates must already exist in Zabbix - the playbook
+# looks them up by name and fails loudly if they are missing.
+zabbix_host_groups:
+  - "Linux servers"
+
+zabbix_templates:
+  - "Linux by Zabbix agent active"
+
+# Optional. Empty means "monitored by the Zabbix server directly".
+# Set to the exact proxy group name to hand the host to a proxy group
+# (Zabbix 7.0+). A plain proxy is not the same thing - see README.
+zabbix_proxy_group: ""
+
+# Agent interface: reach the host by DNS name (false) or by IP (true).
+zabbix_use_ip: false
+zabbix_agent_port: 10050
+
+# ---------------------------------------------------------------------------
+# TLS PSK
+# ---------------------------------------------------------------------------
+# When enabled the playbook reuses an existing PSK file and only generates a
+# new secret when none exists - re-running never breaks an established link.
+zabbix_tls_psk: true
+zabbix_psk_file: /etc/zabbix/zabbix_agent2.psk
+
+# Print the PSK to the console. Off by default: it is a secret and would end
+# up in CI logs. Enable per run with:  -e zabbix_show_psk=true
+zabbix_show_psk: false
+
+# ---------------------------------------------------------------------------
+# AllowKeys whitelist for system.run[]
+# ---------------------------------------------------------------------------
+# Zabbix Agent 2 denies system.run[] unless the exact key is whitelisted.
+# The two defaults below feed the pending-updates items used by many
+# Linux templates. Set to [] to deploy no whitelist at all.
+zabbix_allow_keys:
+  - 'system.run["apt-get -s upgrade | grep -ci ^inst.*security | tr -d ''\n''"]'
+  - 'system.run["apt-get -s upgrade | grep -iPc ''^Inst((?!security).)*$'' | tr -d ''\n''"]'
+
+# ---------------------------------------------------------------------------
+# Troubleshooting
+# ---------------------------------------------------------------------------
+# API tasks hide their output because the request carries the API token and
+# the PSK. Turn this on to see what Zabbix actually answered - a failing
+# host.create is impossible to diagnose otherwise:
+#   ansible-playbook install_agent.yml -e zabbix_api_debug=true
+zabbix_api_debug: false

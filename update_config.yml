@@ -1,0 +1,43 @@
+---
+# Roll out configuration changes only - no package install, no PSK handling,
+# no API calls. Use this after editing group_vars or the templates.
+
+- name: Update the Zabbix Agent 2 configuration
+  hosts: all
+  become: true
+
+  vars:
+    zabbix_config_path: /etc/zabbix/zabbix_agent2.conf
+    zabbix_allow_keys_path: /etc/zabbix/zabbix_agent2.d/AllowKeys.conf
+
+  tasks:
+    - name: Read the PSK identity from the existing configuration
+      ansible.builtin.set_fact:
+        zabbix_psk_identity: "{{ ansible_fqdn | lower }}.agent"
+      when: zabbix_tls_psk
+
+    - name: Deploy the agent configuration
+      ansible.builtin.template:
+        src: zabbix_agent2.conf.j2
+        dest: "{{ zabbix_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: zabbix_agent2 -c %s -T
+      notify: Restart Zabbix Agent
+
+    - name: Deploy the AllowKeys whitelist
+      ansible.builtin.template:
+        src: allow_keys.conf.j2
+        dest: "{{ zabbix_allow_keys_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Zabbix Agent
+      when: zabbix_allow_keys | length > 0
+
+  handlers:
+    - name: Restart Zabbix Agent
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted

@@ -1,0 +1,25 @@
+# Ansible
+*.retry
+.ansible/
+inventory.local.ini
+group_vars/*.local.yml
+
+# Secrets
+.env
+credentials.yml
+*.psk
+
+# Demo state
+demo/.ssh/
+demo/.env
+
+# Editors / OS
+.idea/
+.vscode/
+.claude/
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc

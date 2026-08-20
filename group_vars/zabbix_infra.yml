@@ -1,0 +1,7 @@
+---
+# Hosts in the zabbix_infra group run the Zabbix server or a proxy themselves.
+# Their agent must only answer passive checks coming from the same machine.
+#
+# This replaces the "does the hostname contain zab" guess that such setups
+# usually grow into: group membership is explicit and visible in the inventory.
+zabbix_server_passive: "127.0.0.1"

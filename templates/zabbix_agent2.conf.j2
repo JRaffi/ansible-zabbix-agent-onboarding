@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+# Managed by ansible-zabbix-agent-onboarding - local changes will be overwritten.
+# Full reference: https://www.zabbix.com/documentation/{{ zabbix_release }}/en/manual/appendix/config/zabbix_agent2
+
+PidFile=/run/zabbix/zabbix_agent2.pid
+LogFile=/var/log/zabbix/zabbix_agent2.log
+LogFileSize=0
+
+# Passive checks: only these addresses may query the agent.
+Server={{ zabbix_server_passive }}
+
+# Active checks: the agent connects out to these.
+ServerActive={{ zabbix_server_active }}
+
+# Derive the host name from the system instead of hardcoding it here.
+# Must match the "host" the playbook creates in Zabbix, otherwise active
+# checks arrive under a name Zabbix does not know.
+HostnameItem=system.hostname[fqdn,lower]
+
+PluginSocket=/run/zabbix/agent.plugin.sock
+ControlSocket=/run/zabbix/agent.sock
+{% if zabbix_tls_psk %}
+
+# Encrypt both directions with the pre-shared key. The identity is what the
+# server matches on, the key itself lives in a 0400 file owned by zabbix.
+TLSConnect=psk
+TLSAccept=psk
+TLSPSKIdentity={{ zabbix_psk_identity }}
+TLSPSKFile={{ zabbix_psk_file }}
+{% endif %}
+
+Include=/etc/zabbix/zabbix_agent2.d/*.conf
+Include=/etc/zabbix/zabbix_agent2.d/plugins.d/*.conf

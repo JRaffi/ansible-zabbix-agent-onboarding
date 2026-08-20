@@ -1,0 +1,38 @@
+name: demo
+
+# The lab is the test suite: if a pull request breaks the playbook, this job
+# notices, because it runs the real thing against a real Zabbix.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lab:
+    name: Run the playbook against a real Zabbix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: |
+          pipx install --include-deps ansible-core
+          ansible-playbook --syntax-check install_agent.yml update_config.yml
+
+      - name: Bring up the lab and run the playbook twice
+        run: make demo
+
+      - name: Show the containers if something went wrong
+        if: failure()
+        run: docker compose -f demo/docker-compose.yml ps -a
+
+      - name: Collect logs if something went wrong
+        if: failure()
+        run: docker compose -f demo/docker-compose.yml logs --tail 200
+
+      - name: Tear down
+        if: always()
+        run: make demo-down
