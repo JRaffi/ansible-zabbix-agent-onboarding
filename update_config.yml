@@ -13,7 +13,7 @@
   tasks:
     - name: Read the PSK identity from the existing configuration
       ansible.builtin.set_fact:
-        zabbix_psk_identity: "{{ ansible_fqdn | lower }}.agent"
+        zabbix_psk_identity: "{{ ansible_facts.fqdn | lower }}.agent"
       when: zabbix_tls_psk
 
     - name: Deploy the agent configuration

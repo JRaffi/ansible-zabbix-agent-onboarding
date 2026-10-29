@@ -3,9 +3,10 @@
 [![demo](https://github.com/JRaffi/ansible-zabbix-agent-onboarding/actions/workflows/demo.yml/badge.svg)](https://github.com/JRaffi/ansible-zabbix-agent-onboarding/actions/workflows/demo.yml)
 [![License](https://img.shields.io/badge/License-MIT--0-brightgreen)](LICENSE)
 [![Zabbix](https://img.shields.io/badge/Zabbix-7.4-D40000?logo=zabbix&logoColor=white)](https://www.zabbix.com/)
-[![Ansible](https://img.shields.io/badge/ansible--core-no%20collections-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)](https://ubuntu.com/)
-[![Debian](https://img.shields.io/badge/Debian-12-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
+[![Ansible](https://img.shields.io/badge/ansible--core-2.19%2B-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
+[![Collections](https://img.shields.io/badge/collections-none-555555?logo=ansible&logoColor=white)](https://docs.ansible.com/)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-26.04-E95420?logo=ubuntu&logoColor=white)](https://ubuntu.com/)
+[![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
 ![Architecture](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-lightgrey)
 
 Installing the agent is the easy half. The other half — creating the host in
@@ -14,8 +15,10 @@ people fall back to clicking through the frontend. This playbook does both in
 one pass, and running it twice changes nothing.
 
 It talks to the Zabbix JSON-RPC API directly. No `community.zabbix`, no
-`jmespath`, no collection requirements file: a bare `ansible-core` install is
-enough.
+`jmespath`, no collection requirements file: a bare `ansible-core` install,
+2.19 or newer, is enough. That is the release where native Jinja typing became
+the default, and the API bodies need it — Zabbix rejects `"1"` where it
+expects `1`.
 
 ```bash
 make demo     # throwaway Zabbix 7.4 + two hosts, everything in containers
@@ -42,7 +45,7 @@ make demo     # throwaway Zabbix 7.4 + two hosts, everything in containers
           |                                   |<== encrypted checks ====>|
 ```
 
-The host is created under `ansible_fqdn` in lowercase, and the agent derives
+The host is created under `ansible_facts.fqdn` in lowercase, and the agent derives
 the same name with `HostnameItem=system.hostname[fqdn,lower]`. That match is
 what makes active checks arrive under a name Zabbix recognises — get it wrong
 and the agent silently reports to nobody.
@@ -57,7 +60,7 @@ cd ansible-zabbix-agent-onboarding
 make demo
 ```
 
-It builds a Zabbix 7.4 stack, boots one Ubuntu 24.04 and one Debian 12
+It builds a Zabbix 7.4 stack, boots one Ubuntu 26.04 and one Debian 13
 container with **real systemd**, runs the playbook against both — and then runs
 it a second time to show that nothing changes. Finally it verifies the result
 against the API — both hosts present, both on PSK, both actually sending data —
@@ -132,7 +135,7 @@ Everything lives in `group_vars/all.yml`.
 | `zabbix_api_url` | `$ZABBIX_API_URL` | Frontend URL. `/api_jsonrpc.php` is appended. |
 | `zabbix_api_token` | `$ZABBIX_API_TOKEN` | API token, sent as a bearer token. |
 | `zabbix_api_validate_certs` | `true` | Set to `false` only for a lab with a self-signed certificate. |
-| `zabbix_release` | `7.4` | Which Zabbix repository to add. |
+| `zabbix_release` | `7.4` | Which Zabbix repository to add. `8.0` once that LTS ships. |
 | `zabbix_servers` | `[zabbix.example.com]` | Servers or proxies the agent talks to. |
 | `zabbix_server_passive` | derived | Who may query the agent. Overridden to `127.0.0.1` for the `zabbix_infra` group. |
 | `zabbix_host_groups` | `[Linux servers]` | Must exist in Zabbix. |
@@ -251,7 +254,9 @@ demo/verify.sh             asks Zabbix whether it really worked
 .github/workflows/demo.yml CI: runs the lab on every push
 ```
 
-Tested on Ubuntu 24.04 and Debian 12, against Zabbix 7.4, on amd64 and arm64.
+Tested on Ubuntu 26.04 and Debian 13, against Zabbix 7.4, on amd64 and arm64.
+Zabbix also ships the agent for Ubuntu 22.04 and 24.04 and for Debian 11 and
+12, so older targets work — they are just not what CI runs on every push.
 
 ## Related
 

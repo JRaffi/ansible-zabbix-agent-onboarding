@@ -1,11 +1,15 @@
 # Ansible controller, so trying this out needs nothing but Docker.
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-client curl ca-certificates \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir "ansible-core>=2.17,<2.19"
+ && pip install --no-cache-dir "ansible-core>=2.19,<2.22"
 
+# 2.19 is the floor: from there native Jinja typing is the default, which the
+# JSON-RPC bodies in install_agent.yml rely on. The upper bound is "tested
+# here", not "known broken" - raise it once the next release has run green.
+#
 # Deliberately no collections and no jmespath: the playbook must work with a
 # bare ansible-core install. If something here is needed, that is a bug.
 

@@ -1,6 +1,6 @@
 # A container that behaves like a small server: systemd as PID 1, sshd, sudo.
 # This is what lets the playbook use the systemd module unchanged.
-ARG BASE_IMAGE=ubuntu:24.04
+ARG BASE_IMAGE=ubuntu:26.04
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive

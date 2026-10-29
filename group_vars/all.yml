@@ -15,6 +15,8 @@ zabbix_api_validate_certs: true
 # ---------------------------------------------------------------------------
 # Agent package
 # ---------------------------------------------------------------------------
+# 7.4 is the current stable release. 8.0 LTS is still a release candidate at
+# repo.zabbix.com/zabbix/8.0 - set it here once it ships, nothing else changes.
 zabbix_release: "7.4"
 
 # Optional HTTP proxy used ONLY for downloading the Zabbix repository package.

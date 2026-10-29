@@ -23,8 +23,15 @@
     zabbix_config_path: /etc/zabbix/zabbix_agent2.conf
     zabbix_allow_keys_path: /etc/zabbix/zabbix_agent2.d/AllowKeys.conf
     _api: "{{ zabbix_api_url | regex_replace('/+$', '') }}/api_jsonrpc.php"
-    # Ubuntu needs 24.04, Debian needs 12 - the package name differs.
-    _distro_version: "{{ ansible_distribution_major_version if ansible_distribution == 'Debian' else ansible_distribution_version }}"
+    _distro: "{{ ansible_facts.distribution | lower }}"
+    # The repository package is per release: ubuntu26.04 vs debian13 - Ubuntu
+    # uses the full version, Debian only the major one.
+    _distro_version: "{{ ansible_facts.distribution_major_version if ansible_facts.distribution == 'Debian' else ansible_facts.distribution_version }}"
+    # e.g. .../7.4/release/ubuntu/pool/.../zabbix-release_latest_7.4+ubuntu26.04_all.deb
+    # The line break sits inside the expression, so the URL gets no space.
+    _zabbix_release_deb: >-
+      https://repo.zabbix.com/zabbix/{{ zabbix_release }}/release/{{ _distro }}/pool/main/z/zabbix-release/zabbix-release_latest_{{
+      zabbix_release }}+{{ _distro }}{{ _distro_version }}_all.deb
 
   environment:
     DEBIAN_FRONTEND: noninteractive
@@ -32,8 +39,8 @@
   pre_tasks:
     - name: Verify the target runs a supported distribution
       ansible.builtin.assert:
-        that: ansible_distribution in ['Ubuntu', 'Debian']
-        fail_msg: "Only Ubuntu and Debian are supported, found {{ ansible_distribution }}."
+        that: ansible_facts.distribution in ['Ubuntu', 'Debian']
+        fail_msg: "Only Ubuntu and Debian are supported, found {{ ansible_facts.distribution }}."
         quiet: true
 
     - name: Verify the Zabbix API credentials are set
@@ -54,8 +61,7 @@
     # -----------------------------------------------------------------------
     - name: Install the Zabbix repository package
       ansible.builtin.apt:
-        deb: >-
-          https://repo.zabbix.com/zabbix/{{ zabbix_release }}/release/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_release }}+{{ ansible_distribution | lower }}{{ _distro_version }}_all.deb
+        deb: "{{ _zabbix_release_deb }}"
       environment:
         http_proxy: "{{ zabbix_apt_proxy }}"
         https_proxy: "{{ zabbix_apt_proxy }}"
@@ -102,7 +108,7 @@
     - name: Remember the PSK for the API call
       ansible.builtin.set_fact:
         zabbix_psk: "{{ (_psk_existing.content | b64decode | trim) if _psk_stat.stat.exists else (_psk_new.stdout | trim) }}"
-        zabbix_psk_identity: "{{ ansible_fqdn | lower }}.agent"
+        zabbix_psk_identity: "{{ ansible_facts.fqdn | lower }}.agent"
       no_log: true
       when: zabbix_tls_psk
 
@@ -220,7 +226,7 @@
               method: host.get
               params:
                 output: ["hostid"]
-                filter: {host: ["{{ ansible_fqdn | lower }}"]}
+                filter: {host: ["{{ ansible_facts.fqdn | lower }}"]}
           register: _host
           changed_when: false
           no_log: "{{ not zabbix_api_debug }}"
@@ -253,8 +259,8 @@
           no_log: "{{ not zabbix_api_debug }}"
           vars:
             _base:
-              host: "{{ ansible_fqdn | lower }}"
-              name: "{{ ansible_hostname | lower }}"
+              host: "{{ ansible_facts.fqdn | lower }}"
+              name: "{{ ansible_facts.hostname | lower }}"
               groups: "{{ _group_refs }}"
               templates: "{{ _template_refs }}"
               monitored_by: 0          # 0 = server, 2 = proxy group
@@ -262,8 +268,8 @@
                 - type: 1              # 1 = agent
                   main: 1
                   useip: "{{ 1 if zabbix_use_ip else 0 }}"
-                  ip: "{{ ansible_default_ipv4.address if zabbix_use_ip else '' }}"
-                  dns: "{{ '' if zabbix_use_ip else ansible_fqdn | lower }}"
+                  ip: "{{ ansible_facts.default_ipv4.address if zabbix_use_ip else '' }}"
+                  dns: "{{ '' if zabbix_use_ip else ansible_facts.fqdn | lower }}"
                   port: "{{ zabbix_agent_port }}"
             _with_proxy_group:
               monitored_by: 2
@@ -298,7 +304,7 @@
         - name: Fail with what Zabbix answered
           ansible.builtin.fail:
             msg: >-
-              Zabbix rejected {{ ansible_fqdn | lower }}:
+              Zabbix rejected {{ ansible_facts.fqdn | lower }}:
               {{ _register.json.error.message | default('') }}
               {{ _register.json.error.data | default('') }}
           when: _register.json.error is defined
@@ -306,9 +312,9 @@
         - name: Report what happened
           ansible.builtin.debug:
             msg: >-
-              {{ ansible_fqdn | lower }} was
-              {{ 'updated in' if _host.json.result | length > 0 else 'created in' }} Zabbix
-              {%- if _register.json.error is defined %} - ERROR: {{ _register.json.error }}{% endif %}
+              {{ ansible_facts.fqdn | lower }} was
+              {{ 'updated in' if _host.json.result | length > 0 else 'created in' }}
+              Zabbix{% if _register.json.error is defined %} - ERROR: {{ _register.json.error }}{% endif %}
 
   handlers:
     - name: Restart Zabbix Agent
