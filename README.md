@@ -135,7 +135,9 @@ Everything lives in `group_vars/all.yml`.
 | `zabbix_api_url` | `$ZABBIX_API_URL` | Frontend URL. `/api_jsonrpc.php` is appended. |
 | `zabbix_api_token` | `$ZABBIX_API_TOKEN` | API token, sent as a bearer token. |
 | `zabbix_api_validate_certs` | `true` | Set to `false` only for a lab with a self-signed certificate. |
-| `zabbix_release` | `7.4` | Which Zabbix repository to add. `8.0` once that LTS ships. |
+| `zabbix_release` | `7.4` | Which Zabbix repository branch to add. `8.0` once that LTS ships. |
+| `zabbix_agent_version` | `7.4.16` | Pin `zabbix-agent2` to one upstream version. `""` takes the newest in the branch. |
+| `zabbix_agent_hold` | `true` | `dpkg hold`, so `apt upgrade` cannot move the agent off the pin. |
 | `zabbix_servers` | `[zabbix.example.com]` | Servers or proxies the agent talks to. |
 | `zabbix_server_passive` | derived | Who may query the agent. Overridden to `127.0.0.1` for the `zabbix_infra` group. |
 | `zabbix_host_groups` | `[Linux servers]` | Must exist in Zabbix. |
@@ -147,6 +149,16 @@ Everything lives in `group_vars/all.yml`.
 | `zabbix_allow_keys` | 2 update checks | `system.run[]` whitelist. `[]` deploys none. |
 | `zabbix_apt_proxy` | `""` | HTTP proxy, used only to fetch the Zabbix repository package. |
 | `zabbix_api_debug` | `false` | Show what the API answered. See *Troubleshooting*. |
+
+The pin becomes the apt version `1:7.4.16-*`. The epoch is always `1`; the
+trailing `*` absorbs the build revision — Zabbix rebuilt 7.4.16 as `-2` — and
+the distro suffix, which is `+ubuntu26.04` on one host and `+debian13` on the
+next. So one value works across the fleet and apt installs the newest build of
+exactly that version. A pin outside `zabbix_release` fails before apt runs.
+
+Raising the pin later is a normal run: the playbook is allowed past its own
+hold, and downgrades too. Only `apt upgrade` and unattended-upgrades are
+locked out.
 
 Hosts that run Zabbix themselves belong in the `zabbix_infra` inventory group —
 `group_vars/zabbix_infra.yml` restricts their passive checks to `127.0.0.1`.

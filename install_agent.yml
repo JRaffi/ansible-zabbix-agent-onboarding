@@ -32,6 +32,12 @@
     _zabbix_release_deb: >-
       https://repo.zabbix.com/zabbix/{{ zabbix_release }}/release/{{ _distro }}/pool/main/z/zabbix-release/zabbix-release_latest_{{
       zabbix_release }}+{{ _distro }}{{ _distro_version }}_all.deb
+    # apt wants the full Debian version, e.g. 1:7.4.16-2+ubuntu24.04. The epoch
+    # is always 1; the build revision (Zabbix rebuilds a release as -2) and the
+    # distro suffix differ per package, so the trailing * covers both and apt
+    # picks the newest build of exactly that version - on Ubuntu and Debian
+    # alike. Empty pin means "whatever the branch ships".
+    _agent_pkg: "zabbix-agent2{{ '=1:' ~ zabbix_agent_version ~ '-*' if zabbix_agent_version | length > 0 else '' }}"
 
   environment:
     DEBIAN_FRONTEND: noninteractive
@@ -55,6 +61,17 @@
       delegate_to: localhost
       become: false
 
+    - name: Verify the pinned agent version belongs to the repository branch
+      ansible.builtin.assert:
+        that: zabbix_agent_version is match(zabbix_release | regex_escape ~ '\.')
+        fail_msg: >-
+          zabbix_agent_version '{{ zabbix_agent_version }}' is not part of the
+          {{ zabbix_release }} branch, so the repository will never offer it.
+        quiet: true
+      when: zabbix_agent_version | length > 0
+      delegate_to: localhost
+      become: false
+
   tasks:
     # -----------------------------------------------------------------------
     # Package
@@ -68,9 +85,18 @@
 
     - name: Install zabbix-agent2
       ansible.builtin.apt:
-        name: zabbix-agent2
+        name: "{{ _agent_pkg }}"
         state: present
         update_cache: true
+        # The pin is authoritative: the playbook may move the agent down as
+        # well as up, and past a hold an earlier run put on the package.
+        allow_downgrade: "{{ zabbix_agent_version | length > 0 }}"
+        allow_change_held_packages: "{{ zabbix_agent_version | length > 0 }}"
+
+    - name: Hold the agent at the pinned version
+      ansible.builtin.dpkg_selections:
+        name: zabbix-agent2
+        selection: "{{ 'hold' if zabbix_agent_version | length > 0 and zabbix_agent_hold | bool else 'install' }}"
 
     # -----------------------------------------------------------------------
     # TLS PSK - reuse an existing secret, never regenerate it

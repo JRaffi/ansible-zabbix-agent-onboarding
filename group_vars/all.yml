@@ -13,11 +13,23 @@ zabbix_api_token: "{{ lookup('ansible.builtin.env', 'ZABBIX_API_TOKEN') }}"
 zabbix_api_validate_certs: true
 
 # ---------------------------------------------------------------------------
-# Agent package
+# Agent package - Zabbix Agent 2 (zabbix-agent2), never the old C agent
 # ---------------------------------------------------------------------------
-# 7.4 is the current stable release. 8.0 LTS is still a release candidate at
-# repo.zabbix.com/zabbix/8.0 - set it here once it ships, nothing else changes.
+# Which repository branch to add. 7.4 is the current stable release. 8.0 LTS
+# is still a release candidate at repo.zabbix.com/zabbix/8.0 - set it here
+# once it ships, nothing else changes.
 zabbix_release: "7.4"
+
+# Pin the agent to one upstream version so the whole fleet runs the same build
+# and a run next month does not quietly pull a newer one. Must belong to
+# zabbix_release above - the playbook asserts that before touching apt.
+# Set to "" to take whatever the branch currently ships.
+zabbix_agent_version: "7.4.16"
+
+# Make the pin stick: dpkg hold keeps unattended-upgrades and a plain
+# "apt upgrade" off the agent. The playbook is still allowed past the hold, so
+# raising zabbix_agent_version keeps working. Ignored when the pin is empty.
+zabbix_agent_hold: true
 
 # Optional HTTP proxy used ONLY for downloading the Zabbix repository package.
 # Leave empty when the targets reach the internet directly.
